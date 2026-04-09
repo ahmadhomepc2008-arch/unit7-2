@@ -52,12 +52,12 @@
         .btn-logout { background: linear-gradient(to right, #7f8c8d, #34495e); }
 
         /* --- صفحة النتائج الاحترافية --- */
-        .results-container { max-width: 900px; width: 95%; background: white; padding: 30px; border-radius: 20px; box-shadow: 0 10px 30px rgba(0,0,0,0.2); direction: rtl; }
+        .results-container { max-width: 900px; width: 95%; background: white; padding: 30px; border-radius: 20px; box-shadow: 0 10px 30px rgba(0,0,0,0.2); direction: rtl; overflow-y: auto; max-height: 90vh; }
         .results-table { width: 100%; border-collapse: collapse; margin-top: 20px; }
-        .results-table th { background: var(--primary); color: white; padding: 15px; }
+        .results-table th { background: var(--primary); color: white; padding: 15px; position: sticky; top: 0; }
         .results-table td { padding: 12px; border-bottom: 1px solid #eee; text-align: center; font-weight: 500; }
 
-        /* --- واجهة الامتحان الأصلية (ممنوع التعديل نهائياً) --- */
+        /* --- واجهة الامتحان --- */
         #welcomeScreen { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: linear-gradient(135deg, #2c3e50 0%, #34495e 100%); display: none; justify-content: center; align-items: center; z-index: 9999; color: white; text-align: center; }
         #mainExamContent { display: none; }
         .timer-container { position: fixed; top: 20px; left: 20px; background: white; padding: 10px 20px; border-radius: 30px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); z-index: 1001; border: 2px solid var(--primary); font-weight: bold; }
@@ -81,7 +81,6 @@
         .retake-btn { background: #e67e22; color: white; display: none; }
         .disabled { pointer-events: none; opacity: 0.7; }
 
-        /* حقل الاسم المدمج */
         .name-box { background: #f0f4f8; padding: 20px; border-radius: 10px; margin-bottom: 25px; border-right: 5px solid var(--primary); direction: rtl; text-align: right; }
         .name-box label { font-weight: bold; color: var(--primary); margin-bottom: 8px; display: block; }
         .name-box input { width: 100%; padding: 12px; border: 2px solid #ccc; border-radius: 8px; font-size: 1rem; }
@@ -113,7 +112,7 @@
         <img src="https://i.ibb.co/dsF6pmMw/20170618225634.jpg" alt="Logo" style="max-width: 90px; margin-bottom: 15px;">
         <h2 style="direction: rtl;">لوحة التحكم - الأستاذ أسامة فودة</h2>
         <div class="btn-group">
-            <button class="admin-btn btn-results" onclick="showResultsView()">📄 عرض نتائج الطلاب</button>
+            <button class="admin-btn btn-results" onclick="fetchResultsFromServer()">📄 عرض نتائج الطلاب</button>
             <button class="admin-btn btn-reset" onclick="resetStudentSessions()">🔄 تصفير جلسات الطلاب</button>
             <button class="admin-btn btn-clear" onclick="clearResultsArchive()">🗑️ مسح أرشيف النتائج</button>
             <button class="admin-btn btn-logout" onclick="logoutInstant()">🚪 تسجيل الخروج</button>
@@ -124,7 +123,7 @@
 <div id="resultsPage" style="display:none;">
     <div class="results-container">
         <div style="display:flex; justify-content: space-between; align-items: center; border-bottom: 3px solid var(--primary); padding-bottom: 10px;">
-            <h2 style="margin:0;">قائمة نتائج الطلاب</h2>
+            <h2 style="margin:0;">قائمة نتائج الطلاب (من ملف الإكسل)</h2>
             <button class="admin-btn btn-logout" style="width:auto; padding: 10px 20px;" onclick="hideResultsView()">إغلاق</button>
         </div>
         <table class="results-table">
@@ -184,7 +183,8 @@
 </div>
 
 <script>
-    // بيانات الأسئلة (ثابتة تماماً)
+    const SHEETDB_API_URL = 'https://sheetdb.io/api/v1/sa2f66q6ml1ek'; 
+
     const readingData = [
         { id: 1, q: "Where did Lisa Ludwinski start her business?", options: ["In her bakery in Detroit, Michigan", "In her parents’ kitchen", "In a rented kitchen in Michigan", "In a business class"], ans: "B" },
         { id: 2, q: "How many pies did Lisa make and sell when she started her business?", options: ["20 pies", "30 pies", "40 pies", "50 pies"], ans: "C" },
@@ -211,8 +211,6 @@
         { id: 20, q: "\"I was waiting for the bus when he arrived.\"", options: ["She told me that she was waiting for the bus when he arrived.", "She told me that she had been waiting for the bus when he arrived.", "She told me that she is waiting for the bus when he arrived.", "She told me that she had waited for the bus when he arrived."], ans: "B" }
     ];
 
-    // --- نظام التنقل اللحظي ---
-    let currentTask = "";
     function showPwView(mode) {
         currentTask = mode;
         document.getElementById('pwTitle').innerText = (mode === 'teacher') ? "دخول الأستاذ" : "إعادة الامتحان للطلاب";
@@ -233,11 +231,10 @@
                 document.getElementById('passwordScreen').style.display = 'none';
                 document.getElementById('teacherDashboard').style.display = 'block';
             } else {
-                // تصفير لحظي لإعادة الامتحان
                 localStorage.removeItem('examActive');
                 localStorage.removeItem('examDone');
                 localStorage.removeItem('endTime');
-                location.reload(); // إعادة التحميل ضرورية هنا لتنظيف الحالة البرمجية بالكامل
+                location.reload();
             }
         } else { alert("خطأ في كلمة السر!"); }
     }
@@ -261,17 +258,60 @@
         runTimer(parseInt(endTime));
     }
 
-    // --- إدارة النتائج ولوحة التحكم ---
-    function showResultsView() {
-        const data = JSON.parse(localStorage.getItem('studentResults') || '[]');
-        document.getElementById('resultsBody').innerHTML = data.map(r => `<tr><td>${r.name}</td><td>${r.score}/20</td><td>${r.time}</td></tr>`).join('');
-        document.getElementById('resultsPage').style.display = 'flex';
+    async function sendToSheet(name, score, time) {
+        try {
+            await fetch(SHEETDB_API_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    data: [{ 'الاسم الرباعي': name, 'الدرجة': score, 'وقت التسليم': time }]
+                })
+            });
+        } catch (e) { console.error("API Error"); }
     }
-    function hideResultsView() { document.getElementById('resultsPage').style.display = 'none'; }
-    function resetStudentSessions() { localStorage.removeItem('examActive'); localStorage.removeItem('examDone'); alert("تم تصفير الجلسات."); }
-    function clearResultsArchive() { if(confirm("مسح الأرشيف نهائياً؟")) { localStorage.removeItem('studentResults'); showResultsView(); } }
 
-    // --- منطق الامتحان الأصلي ---
+    // --- الدالة المسؤولة عن عرض النتائج في لوحة التحكم ---
+    async function fetchResultsFromServer() {
+        const resultsBody = document.getElementById('resultsBody');
+        resultsBody.innerHTML = '<tr><td colspan="3">جاري جلب النتائج من ملف الإكسل...</td></tr>';
+        document.getElementById('resultsPage').style.display = 'flex';
+
+        try {
+            const response = await fetch(SHEETDB_API_URL);
+            const data = await response.json();
+            
+            if (data.length === 0) {
+                resultsBody.innerHTML = '<tr><td colspan="3">لا توجد نتائج مسجلة حالياً.</td></tr>';
+            } else {
+                // عرض النتائج مرتبة بحيث يظهر الطالب الأخير في أعلى القائمة
+                resultsBody.innerHTML = data.reverse().map(r => `
+                    <tr>
+                        <td>${r['الاسم الرباعي']}</td>
+                        <td>${r['الدرجة']}/20</td>
+                        <td>${r['وقت التسليم']}</td>
+                    </tr>
+                `).join('');
+            }
+        } catch (e) {
+            resultsBody.innerHTML = '<tr><td colspan="3">حدث خطأ في الاتصال بالسيرفر.</td></tr>';
+        }
+    }
+
+    function hideResultsView() { document.getElementById('resultsPage').style.display = 'none'; }
+    function resetStudentSessions() { localStorage.removeItem('examActive'); localStorage.removeItem('examDone'); alert("تم تصفير جلسات الطلاب."); }
+    
+    async function clearResultsArchive() { 
+        if(confirm("سيتم حذف النتائج نهائياً من ملف الإكسل، هل أنت متأكد؟")) { 
+            try {
+                const response = await fetch(`${SHEETDB_API_URL}/all`, { method: 'DELETE' });
+                if(response.ok) {
+                    alert("تم مسح الأرشيف.");
+                    fetchResultsFromServer();
+                }
+            } catch (e) { alert("فشل المسح."); }
+        } 
+    }
+
     function drawQuiz(data, target) {
         const div = document.getElementById(target);
         data.forEach(item => {
@@ -295,8 +335,9 @@
     }
 
     function submitExam() {
-        const name = document.getElementById('studentName').value.trim();
-        if(!name && !localStorage.getItem('examDone')) { alert("اكتب اسمك الرباعي!"); return; }
+        const nameInput = document.getElementById('studentName');
+        const name = nameInput.value.trim();
+        if(!name && !localStorage.getItem('examDone')) { alert("أدخل اسمك أولاً!"); nameInput.focus(); return; }
         
         clearInterval(clock);
         let score = 0;
@@ -312,9 +353,8 @@
         });
         
         if(!localStorage.getItem('examDone')) {
-            const res = JSON.parse(localStorage.getItem('studentResults') || '[]');
-            res.push({name: name, score: score, time: new Date().toLocaleString('ar-EG')});
-            localStorage.setItem('studentResults', JSON.stringify(res));
+            const timeStr = new Date().toLocaleString('ar-EG');
+            sendToSheet(name, score, timeStr); 
             localStorage.setItem('examDone', 'true');
             localStorage.setItem('savedScore', score);
         }
@@ -338,7 +378,7 @@
             if(localStorage.getItem('examDone') === 'true') {
                 document.getElementById('mainExamContent').style.display = 'block';
                 displayFinalResult(localStorage.getItem('savedScore'));
-                submitExam(); // لتلوين الإجابات
+                submitExam(); 
             } else {
                 startExamNow();
             }
